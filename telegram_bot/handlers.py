@@ -802,11 +802,7 @@ async def _process_ocr(update: Update, context: ContextTypes.DEFAULT_TYPE, file_
 
     try:
         loop = asyncio.get_event_loop()
-        lang = context.user_data.get("ocr_lang", "")
-        if not lang:
-            lang = await loop.run_in_executor(None, lambda: detect_language(tmp_path))
-            context.user_data["ocr_lang"] = lang
-
+        lang = context.user_data.get("ocr_lang", "auto")
         full_text, conf = await loop.run_in_executor(None, lambda: extract_text_gemini(tmp_path, lang_hint=lang))
 
         import uuid as _uuid

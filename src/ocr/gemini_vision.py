@@ -1,13 +1,14 @@
 """
-Gemini Vision OCR -- free high-accuracy text extraction.
-Uses Google Gemini 2.0 Flash (completely free tier).
-Free limits: 15 requests/minute, 1,500/day -- no credit card needed.
-Get your free API key from: aistudio.google.com
+Gemini Vision OCR -- supports ANY language automatically.
+Uses Google Gemini 2.0 Flash (free tier).
+Free: 1,500 requests/day -- no credit card needed.
+Get key: aistudio.google.com
 """
 
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 from typing import Union
 
@@ -17,18 +18,20 @@ from loguru import logger
 
 def extract_text_gemini(
     image: Union[str, Path, np.ndarray],
-    lang_hint: str = "uz",
+    lang_hint: str = "auto",
 ) -> tuple[str, float]:
-    """Extract text from image using Gemini Vision (free)."""
+    """
+    Extract text from image using Gemini Vision.
+    Supports ANY language — Gemini auto-detects if lang_hint is 'auto'.
+    """
 
     api_key = os.getenv("GEMINI_API_KEY", "")
     if not api_key:
         raise RuntimeError(
-            "GEMINI_API_KEY not found in .env\n"
+            "GEMINI_API_KEY not found.\n"
             "Get free key from: aistudio.google.com"
         )
 
-    # Load image as PIL
     import cv2
     from PIL import Image as PILImage
 
@@ -42,39 +45,48 @@ def extract_text_gemini(
     rgb     = cv2.cvtColor(arr, cv2.COLOR_BGR2RGB)
     pil_img = PILImage.fromarray(rgb)
 
-    lang_names = {
-        "uz": "Uzbek", "en": "English", "ru": "Russian",
-        "korean": "Korean", "ko": "Korean",
-        "fr": "French", "de": "German", "ar": "Arabic",
-        "pl": "Polish", "tr": "Turkish",
-    }
-    lang_name = lang_names.get(lang_hint.lower(), lang_hint)
+    # Build prompt — auto-detect OR specific language
+    lang_hint_lower = lang_hint.lower()
+    if lang_hint_lower in ("auto", "", "any"):
+        prompt = (
+            "Extract ALL text from this document image. "
+            "The text may be in ANY language — detect and read it exactly as written. "
+            "Output ONLY the extracted text, preserving the original language. "
+            "Preserve paragraph structure with blank lines between paragraphs. "
+            "Do NOT translate, summarize, or add any commentary. "
+            "If a word is unclear, write your best guess."
+        )
+        log_lang = "auto"
+    else:
+        lang_names = {
+            "uz": "Uzbek",        "en": "English",    "ru": "Russian",
+            "ko": "Korean",       "korean": "Korean",  "fr": "French",
+            "de": "German",       "ar": "Arabic",      "pl": "Polish",
+            "tr": "Turkish",      "zh": "Chinese",     "ja": "Japanese",
+            "es": "Spanish",      "it": "Italian",     "pt": "Portuguese",
+            "nl": "Dutch",        "hi": "Hindi",       "fa": "Persian",
+            "vi": "Vietnamese",   "th": "Thai",        "uk": "Ukrainian",
+        }
+        lang_name = lang_names.get(lang_hint_lower, lang_hint)
+        prompt = (
+            f"Extract ALL text from this document image. "
+            f"The text is in {lang_name}. "
+            f"Output ONLY the extracted text, exactly as it appears. "
+            f"Preserve paragraph breaks with blank lines. "
+            f"Do NOT add any explanation or commentary. "
+            f"Do NOT translate. Reproduce every word exactly."
+        )
+        log_lang = lang_name
 
-    prompt = (
-        f"Extract ALL text from this document image. "
-        f"The text is in {lang_name}. "
-        f"Output ONLY the extracted text, exactly as it appears. "
-        f"Preserve paragraph breaks with blank lines. "
-        f"Do NOT add any explanation or commentary. "
-        f"Do NOT translate. Reproduce every word exactly."
-    )
-
-    # Model priority: fastest/cheapest first
-    MODELS = [
-        "gemini-2.0-flash-lite",
-        "gemini-2.0-flash",
-        "gemini-2.5-flash",
-    ]
+    MODELS = ["gemini-2.0-flash-lite", "gemini-2.0-flash", "gemini-2.5-flash"]
 
     from google import genai
-    import time
-
-    client = genai.Client(api_key=api_key)
+    client     = genai.Client(api_key=api_key)
     last_error = None
 
     for model_name in MODELS:
-        logger.info(f"Gemini Vision | lang={lang_name} | model={model_name}")
-        for attempt in range(2):   # retry once on rate limit
+        logger.info(f"Gemini Vision | lang={log_lang} | model={model_name}")
+        for attempt in range(2):
             try:
                 response = client.models.generate_content(
                     model=model_name,
@@ -93,14 +105,14 @@ def extract_text_gemini(
                         continue
                     else:
                         last_error = e
-                        break   # try next model
+                        break
                 elif "404" in err or "not found" in err.lower():
                     last_error = e
-                    break   # model not available, try next
+                    break
                 else:
-                    raise   # unexpected error, propagate
+                    raise
 
     raise RuntimeError(
         f"All Gemini models failed. Last error: {last_error}\n"
-        f"Make sure your API key is from aistudio.google.com"
+        f"Check your API key at aistudio.google.com"
     )
