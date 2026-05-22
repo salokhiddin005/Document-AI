@@ -27,29 +27,22 @@ from src.ocr.summarizer import summarize_text
 from src.ocr.text_extractor import SUPPORTED_LANGUAGES
 from src.ocr.voice_transcriber import transcribe_voice
 from src.ocr.word_exporter import export_to_docx
-from src.pipeline.document_pipeline import DocumentPipeline
 from src.preprocessing.image_enhancer import enhance_for_ocr
 from src.text_to_handwriting.pdf_exporter import export_to_pdf
 from src.text_to_handwriting.renderer import (
     HANDWRITING_STYLES, INK_COLORS, PAPER_STYLES, HandwritingRenderer
 )
 from telegram_bot.formatter import (
-    build_annotated_image,
     build_json_file,
     build_txt_file,
     format_error,
-    format_low_quality,
-    format_result,
 )
 from telegram_bot.personality import (
-    random_greeting, random_ocr_complete, random_hw_complete,
-    random_summary_intro, random_error, random_tip,
-    random_ocr_step, random_hw_step, send_sticker,
+    random_summary_intro, send_sticker,
 )
 
 # ── Shared instances ──────────────────────────────────────────────────────────
-_pipeline: DocumentPipeline | None = None
-_history:  HistoryManager   | None = None
+_history: HistoryManager | None = None
 
 TMP_DIR = ROOT / "data" / "telegram_tmp"
 TMP_DIR.mkdir(parents=True, exist_ok=True)
@@ -59,13 +52,6 @@ _user_stats: dict = defaultdict(lambda: {"processed": 0, "words": 0, "time_ms": 
 MODE_OCR    = "ocr"
 MODE_HTR    = "htr"
 MODE_IMG_HW = "img_to_hw"
-
-
-def get_pipeline() -> DocumentPipeline:
-    global _pipeline
-    if _pipeline is None:
-        _pipeline = DocumentPipeline()
-    return _pipeline
 
 
 def get_history() -> HistoryManager:
@@ -289,13 +275,12 @@ async def cmd_lang(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _track_msg(context, update.message.message_id)
-    pending = get_pipeline().queue.pending_count()
     m = await update.message.reply_html(
-        f"🖥  <b>System Status</b>\n\n"
-        f"  ✅  Bot is online\n"
-        f"  ✅  AI reading engine ready\n"
-        f"  ✅  Handwriting engine ready\n"
-        f"  {'⚠️' if pending else '✅'}  Review queue: <code>{pending}</code> items",
+        "🖥  <b>System Status</b>\n\n"
+        "  ✅  Bot is online\n"
+        "  ✅  Gemini AI reading engine ready\n"
+        "  ✅  Handwriting engine ready\n"
+        "  ✅  All systems operational",
         reply_markup=_back_menu(),
     )
     _track_msg(context, m.message_id)
