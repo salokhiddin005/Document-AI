@@ -1,0 +1,49 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Document AI System — Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+
+preprocessing:
+  target_dpi: 300
+  max_skew_angle: 45.0        # degrees; images rotated more than this are rejected
+  denoise_strength: 10        # OpenCV fastNlMeans h parameter (higher = more blur)
+  contrast_clip_limit: 2.0    # CLAHE clip limit
+  contrast_tile_size: 8       # CLAHE tile grid size
+  min_quality_score: 0.30     # below this the image is flagged as unreadable
+
+ocr:
+  language: ["en", "korean"]          # PaddleOCR language list
+  device: "cpu"                        # "cpu" or "gpu"
+  use_textline_orientation: true       # auto-detect rotated/upside-down text
+  text_det_thresh: 0.25                # lower = detect more text regions
+  text_det_box_thresh: 0.4             # lower = keep more detected boxes
+  text_recognition_batch_size: 6
+  enable_mkldnn: false                 # disable to avoid PIR inference errors on Windows
+
+barcode:
+  min_area: 1000              # px² — smaller regions skipped
+  scan_attempts: 3            # rotate & retry this many times if first pass fails
+  rotation_step: 5            # degrees per retry rotation
+
+confidence:
+  auto_accept_threshold: 0.85   # >= this → auto-accept
+  spot_check_threshold: 0.70    # >= this but < auto_accept → spot check
+  # below spot_check_threshold  → human review
+
+  # Field-level format validation patterns
+  field_validators:
+    id_number:   '[\w\-]{4,20}'
+    phone:       '[\d\-\+\(\)\s]{7,20}'
+    barcode:     '\d{8,20}'
+
+review:
+  db_path: "data/review_queue.db"
+  crops_dir: "data/feedback/crops"
+
+api:
+  host: "0.0.0.0"
+  port: 8000
+  max_upload_mb: 20
+
+logging:
+  level: "INFO"
+  file: "logs/document_ai.log"
