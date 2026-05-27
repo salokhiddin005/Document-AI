@@ -2,6 +2,8 @@
 
 A production-grade document intelligence platform for extracting text from scanned and handwritten documents. Supports 20+ languages, barcode detection, confidence-based routing to human review, and multiple interfaces: CLI, REST API, Telegram bot, and admin dashboard.
 
+> **Telegram Bot:** [@handwrite_reader_bot](https://t.me/handwrite_reader_bot)
+
 ## Features
 
 - **Handwriting OCR** — extracts text from scanned or photographed documents without predefined field structure
@@ -123,6 +125,10 @@ Key endpoints:
 | GET | `/review/export` | Export corrections for retraining |
 
 ### Telegram Bot
+
+Try it live: [@handwrite_reader_bot](https://t.me/handwrite_reader_bot)
+
+To self-host:
 
 ```bash
 python telegram_bot/bot.py
