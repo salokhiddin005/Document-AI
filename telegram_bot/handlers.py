@@ -904,7 +904,9 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         tmp_path = TMP_DIR / f"{voice.file_id}.ogg"
         await tg_file.download_to_drive(str(tmp_path))
         loop = asyncio.get_event_loop()
-        text = await loop.run_in_executor(None, lambda: transcribe_voice(tmp_path))
+        lang = context.user_data.get("ocr_lang", "auto")
+        voice_lang = None if lang in ("auto", "any", "") else lang
+        text = await loop.run_in_executor(None, lambda: transcribe_voice(tmp_path, language=voice_lang))
         tmp_path.unlink(missing_ok=True)
     except Exception as exc:
         await proc.delete()

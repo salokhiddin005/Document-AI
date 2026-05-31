@@ -1,6 +1,6 @@
 """
-Voice Transcriber — Groq Whisper primary, Gemini fallback.
-Uses FFmpeg to convert Telegram OGG/OPUS to WAV before transcription.
+Voice Transcriber — Groq Whisper with FFmpeg conversion + language hint.
+The #1 fix for hallucination: tell Whisper what language to expect.
 """
 
 from __future__ import annotations
@@ -8,53 +8,44 @@ from __future__ import annotations
 import subprocess
 import time
 from pathlib import Path
-from typing import Union
+from typing import Optional, Union
 from loguru import logger
-from src.ocr.api_key_manager import get_groq_keys, get_gemini_keys, is_rate_limit
+from src.ocr.api_key_manager import get_groq_keys, get_gemini_keys
+
+# Groq Whisper language codes (ISO 639-1)
+GROQ_LANGS = {
+    "uz", "en", "ru", "ko", "fr", "de", "es", "ar",
+    "zh", "ja", "tr", "pl", "it", "pt", "hi", "uk", "vi", "th",
+}
 
 
 def _convert_to_wav(audio_path: Path) -> Path:
-    """
-    Convert any audio to WAV using FFmpeg.
-    WAV is universally supported by all Whisper implementations.
-    Returns WAV path, or original path if FFmpeg not available.
-    """
+    """Convert audio to 16kHz mono WAV using FFmpeg."""
     wav_path = audio_path.with_suffix(".wav")
     try:
         result = subprocess.run(
-            [
-                "ffmpeg", "-y",           # overwrite output
-                "-i", str(audio_path),    # input file
-                "-ar", "16000",           # 16kHz sample rate (Whisper optimal)
-                "-ac", "1",               # mono channel
-                "-f", "wav",              # WAV format
-                str(wav_path),
-            ],
-            capture_output=True,
-            timeout=30,
+            ["ffmpeg", "-y", "-i", str(audio_path),
+             "-ar", "16000", "-ac", "1", "-f", "wav", str(wav_path)],
+            capture_output=True, timeout=30,
         )
-        if result.returncode == 0 and wav_path.exists() and wav_path.stat().st_size > 0:
-            logger.info(f"FFmpeg converted: {audio_path.name} → {wav_path.name} ({wav_path.stat().st_size} bytes)")
+        if result.returncode == 0 and wav_path.exists() and wav_path.stat().st_size > 100:
+            logger.info(f"FFmpeg OK: {wav_path.name} ({wav_path.stat().st_size:,} bytes)")
             return wav_path
-        else:
-            logger.warning(f"FFmpeg failed (code {result.returncode}): {result.stderr.decode()[:200]}")
-            return audio_path
+        logger.warning(f"FFmpeg failed: {result.stderr.decode()[:150]}")
     except FileNotFoundError:
-        logger.warning("FFmpeg not found — sending original audio to Whisper")
-        return audio_path
+        logger.warning("FFmpeg not found — sending original to Whisper")
     except Exception as exc:
         logger.warning(f"FFmpeg error: {exc}")
-        return audio_path
+    return audio_path
 
 
-def _try_groq(api_key: str, audio_path: Path) -> str:
-    """Groq Whisper transcription."""
+def _groq_transcribe(api_key: str, audio_path: Path, language: Optional[str] = None) -> str:
     from groq import Groq
 
-    # Convert to WAV first for best compatibility
-    wav_path    = _convert_to_wav(audio_path)
-    use_path    = wav_path if wav_path != audio_path else audio_path
-    mime_type   = "audio/wav" if use_path.suffix == ".wav" else "audio/ogg"
+    # Convert to WAV for best compatibility
+    wav_path  = _convert_to_wav(audio_path)
+    use_path  = wav_path if wav_path != audio_path else audio_path
+    mime_type = "audio/wav" if use_path.suffix == ".wav" else "audio/ogg"
 
     client = Groq(api_key=api_key)
 
@@ -62,31 +53,33 @@ def _try_groq(api_key: str, audio_path: Path) -> str:
         with open(use_path, "rb") as f:
             audio_bytes = f.read()
 
-        logger.info(f"Sending to Groq Whisper: {use_path.name} ({len(audio_bytes):,} bytes, {mime_type})")
+        logger.info(f"Groq Whisper: {use_path.name} ({len(audio_bytes):,} bytes), lang={language}")
 
-        result = client.audio.transcriptions.create(
+        # KEY FIX: Always specify language — prevents wrong auto-detection
+        kwargs = dict(
             file=(use_path.name, audio_bytes, mime_type),
-            model="whisper-large-v3",     # full model, not turbo — more accurate
+            model="whisper-large-v3",
             response_format="text",
-            temperature=0.0,              # deterministic
+            temperature=0.0,
         )
+        if language and language in GROQ_LANGS:
+            kwargs["language"] = language
+            logger.info(f"Whisper language set to: {language}")
 
-        text = result.strip() if isinstance(result, str) else result.text.strip()
-        logger.info(f"Groq Whisper result: '{text[:100]}'")
+        result  = client.audio.transcriptions.create(**kwargs)
+        text    = result.strip() if isinstance(result, str) else result.text.strip()
+        logger.info(f"Whisper result: '{text[:150]}'")
 
         if not text:
-            raise ValueError("Whisper returned empty result — please try again.")
-
+            raise ValueError("Empty transcription — please speak louder or try again.")
         return text
 
     finally:
-        # Clean up WAV temp file
         if wav_path != audio_path and wav_path.exists():
             wav_path.unlink(missing_ok=True)
 
 
-def _try_gemini(api_key: str, audio_path: Path) -> str:
-    """Gemini audio via File API as fallback."""
+def _gemini_transcribe(api_key: str, audio_path: Path, language: Optional[str] = None) -> str:
     from google import genai
 
     wav_path  = _convert_to_wav(audio_path)
@@ -96,7 +89,8 @@ def _try_gemini(api_key: str, audio_path: Path) -> str:
 
     try:
         uploaded = client.files.upload(file=str(use_path), config={"mime_type": mime_type})
-        prompt   = "Transcribe this audio accurately. Output ONLY the spoken words, nothing else."
+        lang_hint = f" The speaker is speaking in {language}." if language else ""
+        prompt    = f"Transcribe this audio accurately. Output ONLY the spoken words.{lang_hint}"
 
         for model in ["gemini-2.0-flash", "gemini-2.5-flash"]:
             try:
@@ -108,45 +102,45 @@ def _try_gemini(api_key: str, audio_path: Path) -> str:
             except Exception as e:
                 if "404" in str(e): continue
                 raise
-
-        raise RuntimeError("Gemini transcription failed")
+        raise RuntimeError("All Gemini models failed")
     finally:
         if wav_path != audio_path and wav_path.exists():
             wav_path.unlink(missing_ok=True)
 
 
-def transcribe_voice(audio_path: Union[str, Path]) -> str:
+def transcribe_voice(audio_path: Union[str, Path], language: Optional[str] = None) -> str:
+    """
+    Transcribe audio file to text.
+    language: ISO 639-1 code (e.g. 'uz', 'en', 'ru') — strongly recommended!
+    """
     audio_path = Path(audio_path)
     if not audio_path.exists():
         raise FileNotFoundError(f"Audio not found: {audio_path}")
 
     size = audio_path.stat().st_size
-    logger.info(f"Transcribing: {audio_path.name} ({size:,} bytes)")
+    logger.info(f"Transcribing: {audio_path.name} ({size:,} bytes), language={language}")
 
     if size == 0:
         raise ValueError("Audio file is empty. Please try recording again.")
 
-    # ── Try Groq Whisper (primary) ────────────────────────────────────────────
+    # ── Try Groq Whisper ──────────────────────────────────────────────────────
     for i, key in enumerate(get_groq_keys(), 1):
         try:
-            return _try_groq(key, audio_path)
+            return _groq_transcribe(key, audio_path, language)
         except ValueError:
-            raise  # user-facing error, don't retry
+            raise
         except Exception as exc:
             logger.warning(f"Groq Key {i} failed: {str(exc)[:100]}")
             continue
 
-    # ── Groq failed → try Gemini (fallback) ──────────────────────────────────
+    # ── Fallback: Gemini ──────────────────────────────────────────────────────
     if get_gemini_keys():
         logger.info("Groq unavailable — switching to Gemini")
         for i, key in enumerate(get_gemini_keys(), 1):
             try:
-                return _try_gemini(key, audio_path)
+                return _gemini_transcribe(key, audio_path, language)
             except Exception as exc:
                 logger.warning(f"Gemini Key {i} failed: {str(exc)[:100]}")
                 continue
 
-    raise RuntimeError(
-        "Voice transcription unavailable right now.\n"
-        "Please wait 1 minute and try again."
-    )
+    raise RuntimeError("Voice transcription unavailable. Please wait 1 minute and try again.")
