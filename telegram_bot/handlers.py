@@ -1,4 +1,4 @@
-"""
+﻿"""
 Telegram handlers — child-friendly, guided, simple UX.
 """
 
@@ -567,7 +567,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             loop    = asyncio.get_event_loop()
             summary = await loop.run_in_executor(None, lambda: summarize_text(full_text, lang_hint=lang))
             await thinking.delete()
-            m = await query.message.reply_html(f"{random_summary_intro()}\n\n{summary}", reply_markup=_back_menu())
+            m = await query.message.reply_html(f"{random_summary_intro()}\n\n{summary}", reply_markup=_what_next_menu(doc_id))
             _track_msg(context, m.message_id)
         except Exception as exc:
             await thinking.delete()
@@ -633,7 +633,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await thinking.delete()
             m = await query.message.reply_html(
                 f"🌐  <b>Translation → {lang_name}</b>\n\n<pre>{translated[:3000]}</pre>",
-                reply_markup=_back_menu(),
+                reply_markup=_what_next_menu(doc_id),
             )
             _track_msg(context, m.message_id)
         except Exception as exc:
@@ -672,7 +672,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await thinking.delete()
             m = await query.message.reply_html(
                 f"🔑  <b>Key Information Found</b>\n\n{result}",
-                reply_markup=_back_menu(),
+                reply_markup=_what_next_menu(doc_id),
             )
             _track_msg(context, m.message_id)
         except Exception as exc:
@@ -700,7 +700,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             m = await query.message.reply_html(
                 f"📁  <b>Saved to Google Drive!</b>\n\n"
                 f"🔗  <a href='{link}'>Open in Drive</a>",
-                reply_markup=_back_menu(),
+                reply_markup=_what_next_menu(doc_id),
             )
             _track_msg(context, m.message_id)
         except Exception as exc:
@@ -1281,3 +1281,4 @@ async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             reply_markup=_main_menu(context),
         )
         _track_msg(context, m.message_id)
+
