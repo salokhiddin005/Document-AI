@@ -1,6 +1,8 @@
 """
-OCR History Manager — stores and retrieves past OCR results per user.
-SQLite-backed, max 50 records per user.
+History Manager — saves ALL inputs and outputs professionally.
+
+Each document gets a session (doc_id). Every operation on that document
+(OCR, summary, translation, Q&A, key info, voice) is saved as a record.
 """
 
 from __future__ import annotations
@@ -11,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 from loguru import logger
-from sqlalchemy import Column, DateTime, Integer, String, Text, create_engine
+from sqlalchemy import Column, DateTime, Integer, String, Text, create_engine, desc
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 ROOT = Path(__file__).parent.parent.parent
@@ -21,31 +23,65 @@ class Base(DeclarativeBase):
     pass
 
 
-class HistoryRecord(Base):
-    __tablename__ = "ocr_history"
+class DocumentRecord(Base):
+    """One record = one operation performed on a document."""
+    __tablename__ = "document_history"
 
-    id         = Column(Integer, primary_key=True, autoincrement=True)
-    user_id    = Column(String, nullable=False, index=True)
-    doc_id     = Column(String, nullable=False)
-    full_text  = Column(Text, nullable=False)
-    lang       = Column(String, default="en")
-    word_count = Column(Integer, default=0)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    id          = Column(Integer, primary_key=True, autoincrement=True)
+    user_id     = Column(String, nullable=False, index=True)
+    doc_id      = Column(String, nullable=False, index=True)
+    op_type     = Column(String, nullable=False)   # ocr | summary | translation | keyinfo | qa | voice
+    lang        = Column(String, default="auto")
+    extra       = Column(String, nullable=True)    # JSON: target_lang, question, etc.
+    content     = Column(Text,   nullable=False)   # the actual text output
+    word_count  = Column(Integer, default=0)
+    created_at  = Column(DateTime, default=datetime.utcnow)
+
+    @property
+    def extra_data(self) -> dict:
+        try:
+            return json.loads(self.extra or "{}")
+        except Exception:
+            return {}
 
 
 @dataclass
 class HistoryEntry:
     id:         int
     doc_id:     str
-    preview:    str      # first 80 chars
+    op_type:    str
     lang:       str
+    preview:    str
     word_count: int
     created_at: str
     full_text:  str
+    extra:      dict
+
+
+# Icons for each operation type
+OP_ICONS = {
+    "ocr":         "📖",
+    "summary":     "🤖",
+    "translation": "🌐",
+    "keyinfo":     "🔑",
+    "qa":          "❓",
+    "voice":       "🎤",
+    "handwriting": "✍️",
+}
+
+OP_LABELS = {
+    "ocr":         "Read Handwriting",
+    "summary":     "Summary",
+    "translation": "Translation",
+    "keyinfo":     "Key Info",
+    "qa":          "Q&A",
+    "voice":       "Voice",
+    "handwriting": "Handwriting",
+}
 
 
 class HistoryManager:
-    MAX_PER_USER = 50
+    MAX_PER_USER = 200   # keep last 200 records per user
 
     def __init__(self):
         db_path = ROOT / "data" / "ocr_history.db"
@@ -56,23 +92,37 @@ class HistoryManager:
         )
         Base.metadata.create_all(engine)
         self._Session = sessionmaker(bind=engine)
+        logger.info(f"History DB: {db_path}")
 
-    def save(self, user_id: str, doc_id: str, full_text: str, lang: str = "en") -> None:
+    # ── Save ──────────────────────────────────────────────────────────────────
+
+    def save(
+        self,
+        user_id: str,
+        doc_id: str,
+        content: str,
+        lang: str = "auto",
+        op_type: str = "ocr",
+        extra: dict | None = None,
+    ) -> None:
+        """Save any operation to history."""
         with self._Session() as session:
-            session.add(HistoryRecord(
-                user_id=str(user_id),
-                doc_id=doc_id,
-                full_text=full_text,
-                lang=lang,
-                word_count=len(full_text.split()),
+            session.add(DocumentRecord(
+                user_id    = str(user_id),
+                doc_id     = doc_id,
+                op_type    = op_type,
+                lang       = lang,
+                extra      = json.dumps(extra or {}),
+                content    = content,
+                word_count = len(content.split()),
             ))
             session.commit()
 
-            # Keep only latest MAX_PER_USER records per user
+            # Trim old records
             records = (
-                session.query(HistoryRecord)
-                .filter(HistoryRecord.user_id == str(user_id))
-                .order_by(HistoryRecord.created_at.desc())
+                session.query(DocumentRecord)
+                .filter(DocumentRecord.user_id == str(user_id))
+                .order_by(desc(DocumentRecord.created_at))
                 .all()
             )
             if len(records) > self.MAX_PER_USER:
@@ -80,112 +130,116 @@ class HistoryManager:
                     session.delete(old)
                 session.commit()
 
+    # ── Query ─────────────────────────────────────────────────────────────────
+
     def get_user_history(self, user_id: str, limit: int = 10) -> list[HistoryEntry]:
+        """Get latest records across all operation types."""
         with self._Session() as session:
-            records = (
-                session.query(HistoryRecord)
-                .filter(HistoryRecord.user_id == str(user_id))
-                .order_by(HistoryRecord.created_at.desc())
+            rows = (
+                session.query(DocumentRecord)
+                .filter(DocumentRecord.user_id == str(user_id))
+                .order_by(desc(DocumentRecord.created_at))
                 .limit(limit)
                 .all()
             )
-            return [
-                HistoryEntry(
-                    id=r.id,
-                    doc_id=r.doc_id,
-                    preview=r.full_text[:80].replace("\n", " ") + ("..." if len(r.full_text) > 80 else ""),
-                    lang=r.lang,
-                    word_count=r.word_count,
-                    created_at=str(r.created_at)[:16],
-                    full_text=r.full_text,
+            return [self._to_entry(r) for r in rows]
+
+    def get_document_history(self, user_id: str, doc_id: str) -> list[HistoryEntry]:
+        """Get ALL operations performed on one document."""
+        with self._Session() as session:
+            rows = (
+                session.query(DocumentRecord)
+                .filter(
+                    DocumentRecord.user_id == str(user_id),
+                    DocumentRecord.doc_id  == doc_id,
                 )
-                for r in records
-            ]
+                .order_by(DocumentRecord.created_at.asc())
+                .all()
+            )
+            return [self._to_entry(r) for r in rows]
+
+    def get_by_doc_id(self, doc_id: str) -> HistoryEntry | None:
+        """Get the OCR text for a document (used by button callbacks)."""
+        with self._Session() as session:
+            row = (
+                session.query(DocumentRecord)
+                .filter(
+                    DocumentRecord.doc_id  == doc_id,
+                    DocumentRecord.op_type == "ocr",
+                )
+                .first()
+            )
+            if not row:
+                # Try any type for this doc_id
+                row = session.query(DocumentRecord).filter(
+                    DocumentRecord.doc_id == doc_id
+                ).first()
+            return self._to_entry(row) if row else None
 
     def get_by_id(self, record_id: int) -> HistoryEntry | None:
         with self._Session() as session:
-            r = session.get(HistoryRecord, record_id)
-            if not r:
-                return None
-            return HistoryEntry(
-                id=r.id, doc_id=r.doc_id,
-                preview=r.full_text[:80], lang=r.lang,
-                word_count=r.word_count, created_at=str(r.created_at)[:16],
-                full_text=r.full_text,
-            )
-
-    def get_by_doc_id(self, doc_id: str) -> HistoryEntry | None:
-        """Look up a record by its document ID (e.g. 'DOC-ABCD1234')."""
-        with self._Session() as session:
-            r = (
-                session.query(HistoryRecord)
-                .filter(HistoryRecord.doc_id == doc_id)
-                .first()
-            )
-            if not r:
-                return None
-            return HistoryEntry(
-                id=r.id, doc_id=r.doc_id,
-                preview=r.full_text[:80], lang=r.lang,
-                word_count=r.word_count, created_at=str(r.created_at)[:16],
-                full_text=r.full_text,
-            )
-
-    def get_user_stats(self, user_id: str) -> dict:
-        """Compute persistent stats from the database."""
-        with self._Session() as session:
-            records = (
-                session.query(HistoryRecord)
-                .filter(HistoryRecord.user_id == str(user_id))
-                .all()
-            )
-            return {
-                "processed":  len(records),
-                "words":      sum(r.word_count for r in records),
-            }
+            row = session.get(DocumentRecord, record_id)
+            return self._to_entry(row) if row else None
 
     def search_history(self, user_id: str, keyword: str, limit: int = 10) -> list[HistoryEntry]:
-        """Search user's history by keyword in text content."""
         with self._Session() as session:
             rows = (
-                session.query(HistoryRecord)
+                session.query(DocumentRecord)
                 .filter(
-                    HistoryRecord.user_id == str(user_id),
-                    HistoryRecord.full_text.ilike(f"%{keyword}%"),
+                    DocumentRecord.user_id == str(user_id),
+                    DocumentRecord.content.ilike(f"%{keyword}%"),
                 )
-                .order_by(HistoryRecord.created_at.desc())
+                .order_by(desc(DocumentRecord.created_at))
                 .limit(limit)
                 .all()
             )
             return [self._to_entry(r) for r in rows]
 
     def filter_by_lang(self, user_id: str, lang: str, limit: int = 20) -> list[HistoryEntry]:
-        """Filter history by language."""
         with self._Session() as session:
             rows = (
-                session.query(HistoryRecord)
+                session.query(DocumentRecord)
                 .filter(
-                    HistoryRecord.user_id == str(user_id),
-                    HistoryRecord.lang == lang,
+                    DocumentRecord.user_id == str(user_id),
+                    DocumentRecord.lang    == lang,
                 )
-                .order_by(HistoryRecord.created_at.desc())
+                .order_by(desc(DocumentRecord.created_at))
                 .limit(limit)
                 .all()
             )
             return [self._to_entry(r) for r in rows]
 
-    def _to_entry(self, r: HistoryRecord) -> HistoryEntry:
-        return HistoryEntry(
-            id=r.id, doc_id=r.doc_id,
-            preview=(r.full_text[:80] + "...") if len(r.full_text) > 80 else r.full_text,
-            lang=r.lang, word_count=r.word_count,
-            created_at=str(r.created_at)[:16], full_text=r.full_text,
-        )
+    def get_user_stats(self, user_id: str) -> dict:
+        with self._Session() as session:
+            rows = (
+                session.query(DocumentRecord)
+                .filter(DocumentRecord.user_id == str(user_id))
+                .all()
+            )
+            docs = len(set(r.doc_id for r in rows))
+            return {
+                "processed": docs,
+                "operations": len(rows),
+                "words": sum(r.word_count for r in rows if r.op_type == "ocr"),
+            }
 
     def clear_user_history(self, user_id: str) -> int:
         with self._Session() as session:
-            count = session.query(HistoryRecord).filter(
-                HistoryRecord.user_id == str(user_id)
+            count = session.query(DocumentRecord).filter(
+                DocumentRecord.user_id == str(user_id)
             ).delete()
             session.commit()
             return count
+
+    # ── Helpers ───────────────────────────────────────────────────────────────
+
+    def _to_entry(self, r: DocumentRecord) -> HistoryEntry:
+        preview = r.content[:80].replace("\n", " ")
+        if len(r.content) > 80:
+            preview += "..."
+        return HistoryEntry(
+            id=r.id, doc_id=r.doc_id, op_type=r.op_type,
+            lang=r.lang, preview=preview, word_count=r.word_count,
+            created_at=str(r.created_at)[:16], full_text=r.content,
+            extra=r.extra_data,
+        )

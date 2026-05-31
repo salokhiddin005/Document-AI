@@ -321,27 +321,45 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 
 async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from src.ocr.history_manager import OP_ICONS, OP_LABELS
     _track_msg(context, update.message.message_id)
     user    = update.effective_user
-    entries = get_history().get_user_history(str(user.id), limit=10)
+    entries = get_history().get_user_history(str(user.id), limit=15)
+
     if not entries:
         m = await update.message.reply_html(
             "📚  <b>No history yet!</b>\n\n"
-            "Tap <b>📖 Read Handwriting</b> and send me a photo.\n"
-            "Your results will be saved here automatically! 🎯",
+            "Process a document and all results will be saved here automatically! 🎯",
             reply_markup=_back_menu(),
         )
         _track_msg(context, m.message_id)
         return
 
-    lines = ["📚  <b>Your Saved Results</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"]
+    stats = get_history().get_user_stats(str(user.id))
+    lines = [
+        "📚  <b>Document History</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n",
+        f"  📋 Documents: <b>{stats['processed']}</b>  "
+        f"🔄 Operations: <b>{stats['operations']}</b>  "
+        f"📝 Words: <b>{stats['words']:,}</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n",
+    ]
+
     for e in entries:
+        icon  = OP_ICONS.get(e.op_type, "📄")
+        label = OP_LABELS.get(e.op_type, e.op_type)
+        extra = ""
+        if e.op_type == "translation" and e.extra.get("target_lang"):
+            extra = f" → {e.extra['target_lang'].upper()}"
+        elif e.op_type == "qa" and e.extra.get("question"):
+            extra = f": {e.extra['question'][:25]}..."
         lines.append(
-            f"  🔖 <code>{e.id}</code>  🌐 {e.lang}  📝 {e.word_count} words  🕐 {e.created_at}\n"
+            f"  {icon} <b>{label}{extra}</b>  "
+            f"<code>#{e.id}</code>  🌐 {e.lang}  🕐 {e.created_at}\n"
             f"  💬 <i>{e.preview}</i>\n"
         )
+
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    lines.append("💡 Get full text: /history_get &lt;id&gt;  •  🗑️ Clear chat: /clear")
+    lines.append("💡 /history_get &lt;id&gt; — full text  •  /clear — clear chat")
     m = await update.message.reply_html("\n".join(lines), reply_markup=_back_menu())
     _track_msg(context, m.message_id)
 
@@ -450,7 +468,8 @@ async def cmd_mystats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     m = await update.message.reply_html(
         f"📊  <b>Your Stats</b>\n\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"  🗂️  Documents processed : <code>{db_stats['processed']}</code>\n"
+        f"  📋  Documents processed : <code>{db_stats['processed']}</code>\n"
+        f"  🔄  Total operations    : <code>{db_stats.get('operations', 0)}</code>\n"
         f"  📝  Total words read    : <code>{db_stats['words']:,}</code>\n"
         f"  ⚡  Avg speed          : <code>{avg:.1f}s</code>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
@@ -569,6 +588,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await thinking.delete()
             m = await query.message.reply_html(f"{random_summary_intro()}\n\n{summary}", reply_markup=_what_next_menu(doc_id))
             _track_msg(context, m.message_id)
+            # Save to history
+            get_history().save(str(query.from_user.id), doc_id, summary, lang=lang, op_type="summary")
         except Exception as exc:
             await thinking.delete()
             m = await query.message.reply_html(format_error(str(exc))); _track_msg(context, m.message_id)
@@ -636,6 +657,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 reply_markup=_what_next_menu(doc_id),
             )
             _track_msg(context, m.message_id)
+            get_history().save(str(query.from_user.id), doc_id, translated,
+                               op_type="translation", extra={"target_lang": target_lang})
         except Exception as exc:
             await thinking.delete()
             m = await query.message.reply_html(format_error(str(exc))); _track_msg(context, m.message_id)
@@ -675,6 +698,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 reply_markup=_what_next_menu(doc_id),
             )
             _track_msg(context, m.message_id)
+            get_history().save(str(query.from_user.id), doc_id, result, op_type="keyinfo")
         except Exception as exc:
             await thinking.delete()
             m = await query.message.reply_html(format_error(str(exc))); _track_msg(context, m.message_id)
