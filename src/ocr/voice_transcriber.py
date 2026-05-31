@@ -78,13 +78,8 @@ def _try_groq(api_key: str, audio_path: Path) -> str:
             text = result.text.strip() if hasattr(result, "text") else str(result).strip()
             logger.info(f"Groq Whisper result: '{text[:100]}'")
 
-            # Warn about likely hallucination but still return it
-            if text.lower().rstrip(".,!? ") in HALLUCINATIONS or len(text) < 2:
-                logger.warning(f"Possible hallucination: '{text}' — audio may be too short")
-                raise ValueError(
-                    "Could not transcribe — audio too short or silent.\n"
-                    "Please record at least 2-3 seconds and speak clearly."
-                )
+            if not text:
+                raise ValueError("Whisper returned empty result — please try again.")
 
             return text
 
