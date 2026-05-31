@@ -908,7 +908,17 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         tmp_path.unlink(missing_ok=True)
     except Exception as exc:
         await proc.delete()
-        m = await update.message.reply_html(format_error(str(exc))); _track_msg(context, m.message_id); return
+        err_msg = str(exc)
+        # Show voice-specific error, not OCR tips
+        m = await update.message.reply_html(
+            f"🎤  <b>Voice transcription failed</b>\n\n"
+            f"<code>{err_msg[:300]}</code>\n\n"
+            f"💡  <b>Tips:</b>\n"
+            f"  🎙️  Speak clearly and not too fast\n"
+            f"  🔇  Reduce background noise\n"
+            f"  ⏳  If quota error — wait 1 minute and try again"
+        )
+        _track_msg(context, m.message_id); return
 
     await proc.edit_text(
         f"🎤  <b>I heard you!</b>\n\n<i>{text[:200]}{'...' if len(text)>200 else ''}</i>\n\n✍️  Now converting to handwriting...",
