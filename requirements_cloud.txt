@@ -4,6 +4,9 @@ python-telegram-bot==21.6
 # Groq AI (OCR, transcription, text tasks)
 groq>=0.9.0
 
+# Audio conversion (OGG/OPUS → MP3 for better Whisper compatibility)
+pydub>=0.25.1
+
 # Google Gemini
 google-genai==2.5.0
 
