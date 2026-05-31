@@ -1,12 +1,12 @@
-"""Summarizer — Gemini first, Groq as fallback."""
+"""Summarizer — auto-detects document language, summarizes in same language."""
 
 from __future__ import annotations
-import time
 from loguru import logger
 from src.ocr.api_key_manager import run_with_fallback
 
 
 def _gemini_run(api_key: str, prompt: str) -> str:
+    import time
     from google import genai
     client = genai.Client(api_key=api_key)
     for model in ["gemini-2.0-flash-lite", "gemini-2.0-flash"]:
@@ -38,14 +38,19 @@ def _groq_run(api_key: str, prompt: str) -> str:
 def summarize_text(text: str, lang_hint: str = "en") -> str:
     if len(text.split()) < 30:
         return "✏️  Text too short to summarize."
-    lang_names = {"uz":"Uzbek","en":"English","ru":"Russian","ko":"Korean",
-                  "fr":"French","de":"German","ar":"Arabic","pl":"Polish","tr":"Turkish"}
-    lang_name = lang_names.get(lang_hint.lower(), "English")
+
+    # KEY FIX: Don't force a language — let the AI detect it and respond in
+    # the same language as the document. This handles Korean, Uzbek, Arabic, etc.
     prompt = (
-        f"Text is in {lang_name}. Write a concise summary in {lang_name}:\n"
-        f"• Main topic (1 sentence)\n• Key points (3-5 bullets)\n"
-        f"• Important numbers/dates if any\n\nText:\n{text[:4000]}"
+        "Read the following text and provide a concise summary "
+        "IN THE SAME LANGUAGE as the text. Do NOT translate it to English.\n\n"
+        "Include:\n"
+        "• Main topic (1 sentence)\n"
+        "• Key points (3-5 bullet points)\n"
+        "• Important numbers/dates if any\n\n"
+        f"Text:\n{text[:4000]}"
     )
+
     try:
         return run_with_fallback(_gemini_run, _groq_run, prompt)
     except RuntimeError:

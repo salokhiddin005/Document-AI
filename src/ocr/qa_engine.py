@@ -39,7 +39,8 @@ def answer_question(document_text: str, question: str) -> str:
         return "No document text available."
     prompt = (
         f"Answer this question based ONLY on the document below. "
-        f"If not in document, say so.\n\n"
+        f"Answer in the SAME LANGUAGE as the question. "
+        f"If the answer is not in the document, say so.\n\n"
         f"DOCUMENT:\n{document_text[:6000]}\n\n"
         f"QUESTION: {question}\n\nANSWER:"
     )

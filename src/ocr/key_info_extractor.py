@@ -36,10 +36,11 @@ def _groq_run(api_key: str, prompt: str) -> str:
 
 def extract_key_info(text: str) -> str:
     prompt = (
-        "Extract all important information from the text. Look for:\n"
-        "📅 Dates & Times\n👤 Names\n🏢 Organizations\n📍 Addresses\n"
-        "📞 Phones\n📧 Emails\n💰 Amounts\n🔑 Key terms\n\n"
-        "Format clearly. Skip empty categories. Same language as text.\n\n"
+        "Extract key information from the text below. Look for:\n"
+        "📅 Dates & Times\n👤 Names of people\n🏢 Organizations\n"
+        "📍 Addresses\n📞 Phone numbers\n📧 Emails\n💰 Amounts\n🔑 Key terms\n\n"
+        "IMPORTANT: Respond in the SAME LANGUAGE as the text. Do NOT translate.\n"
+        "Skip categories that have no information.\n\n"
         f"TEXT:\n{text[:5000]}"
     )
     return run_with_fallback(_gemini_run, _groq_run, prompt)
