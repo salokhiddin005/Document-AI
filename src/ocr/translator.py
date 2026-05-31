@@ -1,9 +1,9 @@
-"""Translator — rotates API keys on rate limit."""
+"""Translator — uses Groq Llama, rotates API keys on rate limit."""
 
 from __future__ import annotations
-import time
-from loguru import logger
 from src.ocr.api_key_manager import run_with_key_rotation
+
+TEXT_MODEL = "llama-3.3-70b-versatile"
 
 LANGUAGES = {
     "en":"English","uz":"Uzbek","ru":"Russian","ko":"Korean",
@@ -17,32 +17,23 @@ LANG_FLAGS = {
     "es":"🇪🇸","ar":"🇸🇦","zh":"🇨🇳","ja":"🇯🇵","tr":"🇹🇷","pl":"🇵🇱",
     "it":"🇮🇹","pt":"🇵🇹","hi":"🇮🇳","uk":"🇺🇦","vi":"🇻🇳","th":"🇹🇭",
 }
-MODELS = ["gemini-2.0-flash-lite", "gemini-2.0-flash", "gemini-2.5-flash"]
 
 
-def _translate_with_key(api_key: str, prompt: str) -> str:
-    from google import genai
-    client = genai.Client(api_key=api_key)
-    for model in MODELS:
-        for attempt in range(2):
-            try:
-                r = client.models.generate_content(model=model, contents=[prompt])
-                return r.text.strip()
-            except Exception as e:
-                err = str(e)
-                if "429" in err or "RESOURCE_EXHAUSTED" in err:
-                    if attempt == 0: time.sleep(15); continue
-                    else: break
-                elif "404" in err: break
-                else: raise
-    raise Exception("429 All models rate-limited")
+def _run_with_key(api_key: str, prompt: str) -> str:
+    from groq import Groq
+    client   = Groq(api_key=api_key)
+    response = client.chat.completions.create(
+        model=TEXT_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=4096,
+    )
+    return response.choices[0].message.content.strip()
 
 
 def translate_text(text: str, target_lang: str) -> str:
     lang_name = LANGUAGES.get(target_lang.lower(), target_lang)
-    prompt = (
+    prompt    = (
         f"Translate the following text to {lang_name}. "
-        f"Output ONLY the translated text, nothing else. "
-        f"Preserve paragraph breaks.\n\n{text[:5000]}"
+        f"Output ONLY the translated text. Preserve paragraph breaks.\n\n{text[:5000]}"
     )
-    return run_with_key_rotation(_translate_with_key, prompt)
+    return run_with_key_rotation(_run_with_key, prompt)

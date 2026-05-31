@@ -1,9 +1,11 @@
 """
-Gemini Vision OCR — supports any language, rotates API keys on rate limit.
+Groq Vision OCR — reads text from images using Groq's Llama Vision.
+Supports any language. Rotates API keys on rate limit.
 """
 
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 from typing import Union
 
@@ -12,43 +14,16 @@ from loguru import logger
 
 from src.ocr.api_key_manager import run_with_key_rotation
 
-MODELS = ["gemini-2.0-flash-lite", "gemini-2.0-flash", "gemini-2.5-flash"]
+VISION_MODELS = [
+    "llama-3.2-90b-vision-preview",   # best accuracy
+    "llama-3.2-11b-vision-preview",    # fallback
+]
 
 
-def _ocr_with_key(api_key: str, pil_img, prompt: str) -> tuple[str, float]:
-    import time
-    from google import genai
-    client     = genai.Client(api_key=api_key)
-    last_error = None
-    for model in MODELS:
-        for attempt in range(2):
-            try:
-                response = client.models.generate_content(
-                    model=model, contents=[pil_img, prompt]
-                )
-                text = response.text.strip()
-                logger.info(f"Gemini OCR: {len(text.split())} words | {model}")
-                return text, 0.97
-            except Exception as e:
-                err = str(e)
-                if "429" in err or "RESOURCE_EXHAUSTED" in err:
-                    if attempt == 0:
-                        time.sleep(15); continue
-                    else:
-                        last_error = e; break
-                elif "404" in err or "not found" in err.lower():
-                    last_error = e; break
-                else:
-                    raise
-    raise Exception(f"429 All models rate-limited: {last_error}")
-
-
-def extract_text_gemini(
-    image: Union[str, Path, np.ndarray],
-    lang_hint: str = "auto",
-) -> tuple[str, float]:
+def _img_to_b64(image: Union[str, Path, np.ndarray]) -> str:
     import cv2
     from PIL import Image as PILImage
+    import io
 
     if isinstance(image, np.ndarray):
         arr = image
@@ -59,16 +34,58 @@ def extract_text_gemini(
 
     rgb     = cv2.cvtColor(arr, cv2.COLOR_BGR2RGB)
     pil_img = PILImage.fromarray(rgb)
+    buf     = io.BytesIO()
+    pil_img.save(buf, format="JPEG", quality=92)
+    return base64.b64encode(buf.getvalue()).decode("utf-8")
+
+
+def _ocr_with_key(api_key: str, b64_image: str, prompt: str) -> tuple[str, float]:
+    import time
+    from groq import Groq
+    client = Groq(api_key=api_key)
+
+    for model in VISION_MODELS:
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url",
+                         "image_url": {"url": f"data:image/jpeg;base64,{b64_image}"}},
+                        {"type": "text", "text": prompt},
+                    ],
+                }],
+                max_tokens=4096,
+            )
+            text = response.choices[0].message.content.strip()
+            logger.info(f"Groq OCR: {len(text.split())} words | {model}")
+            return text, 0.97
+        except Exception as e:
+            err = str(e)
+            if "429" in err or "rate_limit" in err.lower():
+                raise   # let key manager handle rotation
+            elif "model_not_active" in err or "not found" in err.lower():
+                logger.warning(f"Model {model} unavailable, trying next")
+                continue
+            else:
+                raise
+    raise RuntimeError("All vision models unavailable")
+
+
+def extract_text_gemini(
+    image: Union[str, Path, np.ndarray],
+    lang_hint: str = "auto",
+) -> tuple[str, float]:
+    b64 = _img_to_b64(image)
 
     lang_lower = lang_hint.lower()
     if lang_lower in ("auto", "", "any"):
         prompt = (
             "Extract ALL text from this document image. "
-            "The text may be in ANY language — detect and read it exactly as written. "
-            "Output ONLY the extracted text, preserving the original language. "
-            "Preserve paragraph structure. "
-            "Do NOT translate, summarize, or add commentary. "
-            "If a word is unclear, write your best guess."
+            "Detect the language automatically and read every word exactly as written. "
+            "Output ONLY the extracted text, preserving the original language and paragraph structure. "
+            "Do NOT translate, summarize, or add any commentary."
         )
     else:
         lang_names = {
@@ -76,14 +93,13 @@ def extract_text_gemini(
             "fr":"French","de":"German","ar":"Arabic","pl":"Polish",
             "tr":"Turkish","zh":"Chinese","ja":"Japanese","es":"Spanish",
             "it":"Italian","pt":"Portuguese","nl":"Dutch","hi":"Hindi",
-            "fa":"Persian","vi":"Vietnamese","th":"Thai","uk":"Ukrainian",
         }
         lang_name = lang_names.get(lang_lower, lang_hint)
         prompt = (
             f"Extract ALL text from this document image. "
             f"The text is in {lang_name}. "
-            f"Output ONLY the extracted text, exactly as it appears. "
-            f"Preserve paragraph breaks. Do NOT translate or add commentary."
+            f"Output ONLY the extracted text exactly as it appears. "
+            f"Do NOT translate or add any commentary."
         )
 
-    return run_with_key_rotation(_ocr_with_key, pil_img, prompt)
+    return run_with_key_rotation(_ocr_with_key, b64, prompt)

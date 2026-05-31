@@ -1,6 +1,9 @@
 # Telegram bot
 python-telegram-bot==21.6
 
+# Groq AI (OCR, transcription, text tasks)
+groq>=0.9.0
+
 # Google Gemini
 google-genai==2.5.0
 
