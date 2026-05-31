@@ -1,49 +1,38 @@
-"""
-Key Info Extractor - extract dates, names, amounts, phones, emails from text.
-"""
+"""Key Info Extractor — rotates API keys on rate limit."""
 
 from __future__ import annotations
-
-import os
 import time
-from loguru import logger
+from src.ocr.api_key_manager import run_with_key_rotation
+
+MODELS = ["gemini-2.0-flash-lite", "gemini-2.0-flash", "gemini-2.5-flash"]
+
+
+def _extract_with_key(api_key: str, prompt: str) -> str:
+    from google import genai
+    client = genai.Client(api_key=api_key)
+    for model in MODELS:
+        for attempt in range(2):
+            try:
+                r = client.models.generate_content(model=model, contents=[prompt])
+                return r.text.strip()
+            except Exception as e:
+                err = str(e)
+                if "429" in err or "RESOURCE_EXHAUSTED" in err:
+                    if attempt == 0: time.sleep(15); continue
+                    else: break
+                elif "404" in err: break
+                else: raise
+    raise Exception("429 All models rate-limited")
 
 
 def extract_key_info(text: str) -> str:
-    """Extract key structured information from document text."""
-    api_key = os.getenv("GEMINI_API_KEY", "")
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY not found")
-
     prompt = (
-        "Extract all important information from the text below. "
-        "Look for and list:\n"
-        "📅 Dates & Times\n"
-        "👤 Names of people\n"
-        "🏢 Organization/Company names\n"
-        "📍 Addresses & Locations\n"
-        "📞 Phone numbers\n"
-        "📧 Email addresses\n"
-        "💰 Amounts, prices, numbers\n"
-        "🔑 Key terms or important phrases\n\n"
-        "Format each category clearly. If nothing found for a category, skip it. "
+        "Extract all important information from the text below. Look for:\n"
+        "📅 Dates & Times\n👤 Names of people\n🏢 Organizations\n"
+        "📍 Addresses & Locations\n📞 Phone numbers\n📧 Emails\n"
+        "💰 Amounts & prices\n🔑 Key terms\n\n"
+        "Format each category clearly. Skip empty categories. "
         "Output in the same language as the text.\n\n"
         f"TEXT:\n{text[:5000]}"
     )
-
-    from google import genai
-    client = genai.Client(api_key=api_key)
-    models = ["gemini-2.0-flash-lite", "gemini-2.0-flash"]
-
-    for model in models:
-        try:
-            logger.info(f"Key info extraction using {model}")
-            response = client.models.generate_content(model=model, contents=[prompt])
-            return response.text.strip()
-        except Exception as e:
-            if "429" in str(e):
-                time.sleep(15)
-                continue
-            raise
-
-    raise RuntimeError("Key info extraction failed")
+    return run_with_key_rotation(_extract_with_key, prompt)
