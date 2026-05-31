@@ -141,12 +141,9 @@ def transcribe_voice(audio_path: Union[str, Path]) -> str:
     size = audio_path.stat().st_size
     logger.info(f"Transcribing: {audio_path.name} ({size:,} bytes)")
 
-    # Minimum size check — less than 3KB is almost certainly empty/corrupted
-    if size < 3000:
-        raise ValueError(
-            f"Audio file is too small ({size} bytes).\n"
-            "Please send a longer voice message (at least 1-2 seconds)."
-        )
+    # Only reject completely empty files (0 bytes)
+    if size == 0:
+        raise ValueError("Audio file is empty. Please try recording again.")
 
     # ── Try Groq Whisper ──────────────────────────────────────────────────────
     groq_keys = get_groq_keys()
