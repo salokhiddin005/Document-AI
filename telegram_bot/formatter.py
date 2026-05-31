@@ -212,23 +212,55 @@ def build_txt_file(result: "DocumentResult", out_dir: Path) -> Path:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def format_error(error: str) -> str:
-    import random
-    openers = [
-        "😅  Oops! Something went sideways.",
-        "🙈  Hmm, that didn't go as planned.",
-        "😬  Small hiccup! Don't worry.",
-        "🤔  Something went wrong — but we'll fix it!",
-    ]
+    err_lower = error.lower()
+    is_rate_limit = any(x in err_lower for x in [
+        "429", "rate", "quota", "exhausted", "all providers failed", "busy"
+    ])
+
+    if is_rate_limit:
+        return (
+            "⏳  <b>API Rate Limit Reached</b>\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "Both Gemini and Groq API keys are temporarily busy.\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "🔧  <b>How to fix:</b>\n\n"
+            "  ⏱️  <b>Option 1 — Wait 1 minute</b>\n"
+            "       Free API limits reset every 60 seconds\n\n"
+            "  🔑  <b>Option 2 — Add more API keys</b>\n"
+            "       Go to Railway → Variables → Add:\n"
+            "       <code>GEMINI_API_KEY_2</code> = new Gemini key\n"
+            "       <code>GROQ_API_KEY_2</code> = new Groq key\n\n"
+            "  🌐  Get free keys:\n"
+            "       Gemini: <b>aistudio.google.com</b>\n"
+            "       Groq:   <b>console.groq.com</b>"
+        )
+
+    # Generic error with context-aware tips
+    err_short = error[:200]
+    if any(x in err_lower for x in ["voice", "audio", "transcri", "whisper"]):
+        tips = (
+            "🎙️  Speak clearly and loudly\n"
+            "  🔇  Record in a quiet place\n"
+            "  ⏱️  Send at least 3-5 seconds of speech"
+        )
+    elif any(x in err_lower for x in ["image", "photo", "file", "download"]):
+        tips = (
+            "📎  Send as <b>File</b> for better quality\n"
+            "  💡  Use good lighting, no shadows\n"
+            "  📐  Hold camera flat above the page"
+        )
+    else:
+        tips = (
+            "⏳  Wait 1 minute and try again\n"
+            "  🔄  Use /start to reset if needed"
+        )
+
     return (
-        f"{random.choice(openers)}\n\n"
+        "😬  <b>Something went wrong</b>\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"<code>{error}</code>\n"
+        f"<code>{err_short}</code>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "💡 <b>Quick fixes to try:</b>\n"
-        "  📸  Send as <b>File</b> (not photo) for best quality\n"
-        "  💡  Use good lighting, no shadows\n"
-        "  📐  Hold camera flat above the page\n"
-        "  🎯  Make sure text is sharp and in focus"
+        f"💡  {tips}"
     )
 
 
