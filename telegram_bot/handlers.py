@@ -528,12 +528,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         _track_msg(context, m.message_id); return
 
     if data.startswith("lang:"):
-        lang = data.split(":", 1)[1]
-        context.user_data["ocr_lang"] = lang
+        lang       = data.split(":", 1)[1]
         lang_label = SUPPORTED_LANGUAGES.get(lang, lang)
-        get_pipeline().extractor.set_language(lang)
+        context.user_data["ocr_lang"] = lang
+        tip = "I'll auto-detect the language!" if lang == "auto" else f"I'll read in {lang_label}!"
         m = await query.message.reply_html(
-            f"✅  Language set to <b>{lang_label}</b>!\n\nNow send me a photo and I'll read it in {lang_label}.",
+            f"✅  Language set to <b>{lang_label}</b>!\n\n{tip}\n\nNow send me a photo 📸",
             reply_markup=_main_menu(context),
         )
         _track_msg(context, m.message_id); return
