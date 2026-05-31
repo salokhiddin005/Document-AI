@@ -1098,14 +1098,6 @@ async def _process_ocr(update: Update, context: ContextTypes.DEFAULT_TYPE, file_
     except Exception as exc:
         logger.warning(f"PDF export failed: {exc}")
 
-    # ── Auto summary ──────────────────────────────────────────────────────────
-    try:
-        summary = await loop.run_in_executor(None, lambda: summarize_text(result.full_text, lang_hint=lang))
-        m = await msg.reply_html(f"🤖  <b>Quick Summary</b>\n\n{summary}")
-        _track_msg(context, m.message_id)
-    except Exception as exc:
-        logger.warning(f"Summary failed: {exc}")
-
     # ── Cache & save ──────────────────────────────────────────────────────────
     if context.bot_data.get("files") is None:
         context.bot_data["files"] = {}
