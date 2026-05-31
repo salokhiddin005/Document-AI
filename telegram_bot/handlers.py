@@ -469,6 +469,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     data = query.data
     name = update.effective_user.first_name or "there"
 
+    # Remove the button keyboard immediately after tap — keeps chat clean
+    try:
+        await query.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass  # message too old or already edited
+
     if data == "menu":
         m = await query.message.reply_html(_welcome(name, context), reply_markup=_main_menu(context))
         _track_msg(context, m.message_id); return
