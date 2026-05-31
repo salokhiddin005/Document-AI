@@ -1086,23 +1086,17 @@ async def _process_ocr(update: Update, context: ContextTypes.DEFAULT_TYPE, file_
     )
     _track_msg(context, m.message_id)
 
-    # ── Auto-send files ───────────────────────────────────────────────────────
-    loop = asyncio.get_event_loop()
-    for path, ext, caption in [
-        (TMP_DIR / f"{result.document_id}.md",  "md",  "📝  Text file (.md)"),
-        (TMP_DIR / f"{result.document_id}_text.pdf", "pdf", "📄  PDF file"),
-    ]:
-        try:
-            if ext == "md":
-                await loop.run_in_executor(None, lambda p=path: export_to_md(result.full_text, p))
-            else:
-                await loop.run_in_executor(None, lambda p=path: export_text_to_pdf(result.full_text, p))
-            with open(path, "rb") as f:
-                m = await msg.reply_document(document=f, filename=f"document.{ext}", caption=caption)
-            _track_msg(context, m.message_id)
-            path.unlink(missing_ok=True)
-        except Exception as exc:
-            logger.warning(f"{ext} export failed: {exc}")
+    # ── Auto-send PDF of extracted text ──────────────────────────────────────
+    loop     = asyncio.get_event_loop()
+    pdf_path = TMP_DIR / f"{result.document_id}_text.pdf"
+    try:
+        await loop.run_in_executor(None, lambda: export_text_to_pdf(result.full_text, pdf_path))
+        with open(pdf_path, "rb") as f:
+            m = await msg.reply_document(document=f, filename="document.pdf", caption="📄  Extracted text (PDF)")
+        _track_msg(context, m.message_id)
+        pdf_path.unlink(missing_ok=True)
+    except Exception as exc:
+        logger.warning(f"PDF export failed: {exc}")
 
     # ── Auto summary ──────────────────────────────────────────────────────────
     try:
