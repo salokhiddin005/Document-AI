@@ -24,16 +24,24 @@ HALLUCINATIONS = {
 
 
 def _convert_to_mp3(audio_path: Path) -> Path:
-    """Convert OGG/OPUS to MP3 for better Whisper compatibility."""
+    """Convert OGG/OPUS to WAV then MP3 for best Whisper compatibility."""
     try:
         from pydub import AudioSegment
+
+        # Try loading with explicit codec for Telegram's OPUS format
+        try:
+            audio = AudioSegment.from_ogg(str(audio_path))
+        except Exception:
+            audio = AudioSegment.from_file(str(audio_path))
+
         mp3_path = audio_path.with_suffix(".mp3")
-        audio = AudioSegment.from_file(str(audio_path))
-        audio.export(str(mp3_path), format="mp3", bitrate="64k")
-        logger.info(f"Converted to MP3: {mp3_path.name}")
+        # Normalize volume and export
+        audio = audio.normalize()
+        audio.export(str(mp3_path), format="mp3", bitrate="128k")
+        logger.info(f"Converted to MP3: {mp3_path.name} ({mp3_path.stat().st_size} bytes)")
         return mp3_path
     except Exception as exc:
-        logger.warning(f"Audio conversion failed: {exc} — using original")
+        logger.warning(f"Audio conversion failed: {exc} — using original OGG")
         return audio_path
 
 

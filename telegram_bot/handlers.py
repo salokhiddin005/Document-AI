@@ -909,14 +909,13 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     except Exception as exc:
         await proc.delete()
         err_msg = str(exc)
-        # Show voice-specific error, not OCR tips
         m = await update.message.reply_html(
-            f"🎤  <b>Voice transcription failed</b>\n\n"
-            f"<code>{err_msg[:300]}</code>\n\n"
-            f"💡  <b>Tips:</b>\n"
-            f"  🎙️  Speak clearly and not too fast\n"
-            f"  🔇  Reduce background noise\n"
-            f"  ⏳  If quota error — wait 1 minute and try again"
+            f"🎤  <b>Could not transcribe voice</b>\n\n"
+            f"<code>{err_msg[:200]}</code>\n\n"
+            f"💡  <b>Better option — send as audio file:</b>\n"
+            f"  📎  Tap paperclip → <b>File</b> → choose MP3/WAV\n"
+            f"  This works much better than voice notes!\n\n"
+            f"  Or try speaking longer and more clearly 🎙️"
         )
         _track_msg(context, m.message_id); return
 
