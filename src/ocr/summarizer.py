@@ -39,15 +39,18 @@ def summarize_text(text: str, lang_hint: str = "en") -> str:
     if len(text.split()) < 30:
         return "✏️  Text too short to summarize."
 
-    # KEY FIX: Don't force a language — let the AI detect it and respond in
-    # the same language as the document. This handles Korean, Uzbek, Arabic, etc.
+    # Always summarize in both English and Russian
     prompt = (
-        "Read the following text and provide a concise summary "
-        "IN THE SAME LANGUAGE as the text. Do NOT translate it to English.\n\n"
-        "Include:\n"
+        "Read the following text and provide a concise summary in TWO languages:\n\n"
+        "🇬🇧 ENGLISH:\n"
         "• Main topic (1 sentence)\n"
         "• Key points (3-5 bullet points)\n"
         "• Important numbers/dates if any\n\n"
+        "🇷🇺 RUSSIAN:\n"
+        "• Главная тема (1 предложение)\n"
+        "• Ключевые моменты (3-5 пунктов)\n"
+        "• Важные числа/даты если есть\n\n"
+        "Keep each section brief and clear.\n\n"
         f"Text:\n{text[:4000]}"
     )
 
