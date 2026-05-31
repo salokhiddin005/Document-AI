@@ -21,8 +21,12 @@ from loguru import logger
 #  AssemblyAI — handles ANY audio format including Telegram OGG/OPUS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _assemblyai_transcribe(audio_path: Path, language: Optional[str] = None) -> str:
-    """Upload audio to AssemblyAI and get transcript."""
+def _assemblyai_transcribe(
+    audio_path: Path,
+    language: Optional[str] = None,
+    telegram_url: Optional[str] = None,
+) -> str:
+    """Transcribe via AssemblyAI — uses Telegram URL directly (most reliable)."""
     api_key = os.getenv("ASSEMBLYAI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError("ASSEMBLYAI_API_KEY not configured")
@@ -32,21 +36,25 @@ def _assemblyai_transcribe(audio_path: Path, language: Optional[str] = None) -> 
 
     config = aai.TranscriptionConfig(
         language_code=language if language and language not in ("auto", "any") else None,
-        language_detection=True,
+        language_detection=not bool(language and language not in ("auto", "any")),
     )
 
-    logger.info(f"AssemblyAI: uploading {audio_path.name} ({audio_path.stat().st_size:,} bytes)")
+    # Prefer Telegram URL — AssemblyAI downloads it directly, no format issues
+    source = telegram_url if telegram_url else str(audio_path)
+    size   = audio_path.stat().st_size if audio_path.exists() else 0
+
+    logger.info(f"AssemblyAI: source={'URL' if telegram_url else 'file'} ({size:,} bytes) lang={language}")
     transcriber = aai.Transcriber()
-    transcript  = transcriber.transcribe(str(audio_path), config=config)
+    transcript  = transcriber.transcribe(source, config=config)
 
     if transcript.status == aai.TranscriptStatus.error:
         raise RuntimeError(f"AssemblyAI error: {transcript.error}")
 
     text = (transcript.text or "").strip()
-    logger.info(f"AssemblyAI result: '{text[:100]}'")
+    logger.info(f"AssemblyAI result: '{text[:150]}'")
 
     if not text:
-        raise ValueError("AssemblyAI returned empty — audio may be silent.")
+        raise ValueError("No speech detected — please speak clearly into the microphone.")
     return text
 
 
@@ -144,23 +152,24 @@ def _gemini_transcribe(api_key: str, audio_path: Path, language: Optional[str] =
 #  Main entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
-def transcribe_voice(audio_path: Union[str, Path], language: Optional[str] = None) -> str:
+def transcribe_voice(
+    audio_path: Union[str, Path],
+    language: Optional[str] = None,
+    telegram_url: Optional[str] = None,
+) -> str:
     audio_path = Path(audio_path)
-    if not audio_path.exists():
-        raise FileNotFoundError(f"Audio not found: {audio_path}")
-
-    size = audio_path.stat().st_size
+    size = audio_path.stat().st_size if audio_path.exists() else 0
     logger.info(f"Transcribing: {audio_path.name} ({size:,} bytes) lang={language}")
 
-    if size == 0:
-        raise ValueError("Audio file is empty. Please try recording again.")
+    if size == 0 and not telegram_url:
+        raise ValueError("Audio file is empty. Please try again.")
 
     from src.ocr.api_key_manager import get_groq_keys, get_gemini_keys
 
-    # ── 1. AssemblyAI (most reliable for OGG/OPUS) ───────────────────────────
+    # ── 1. AssemblyAI — uses Telegram URL directly, most reliable ─────────────
     if os.getenv("ASSEMBLYAI_API_KEY", "").strip():
         try:
-            return _assemblyai_transcribe(audio_path, language)
+            return _assemblyai_transcribe(audio_path, language, telegram_url)
         except ValueError:
             raise
         except Exception as exc:

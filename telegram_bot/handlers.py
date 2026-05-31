@@ -900,13 +900,25 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     proc = await update.message.reply_html("🎤  <b>Listening to your voice...</b>")
     _track_msg(context, proc.message_id)
     try:
-        tg_file  = await context.bot.get_file(voice.file_id)
-        tmp_path = TMP_DIR / f"{voice.file_id}.ogg"
+        tg_file   = await context.bot.get_file(voice.file_id)
+        tmp_path  = TMP_DIR / f"{voice.file_id}.ogg"
         await tg_file.download_to_drive(str(tmp_path))
-        loop = asyncio.get_event_loop()
-        lang = context.user_data.get("ocr_lang", "auto")
+
+        # Log file size to help diagnose issues
+        file_size = tmp_path.stat().st_size if tmp_path.exists() else 0
+        logger.info(f"Voice downloaded: {tmp_path.name} = {file_size:,} bytes")
+
+        loop       = asyncio.get_event_loop()
+        lang       = context.user_data.get("ocr_lang", "auto")
         voice_lang = None if lang in ("auto", "any", "") else lang
-        text = await loop.run_in_executor(None, lambda: transcribe_voice(tmp_path, language=voice_lang))
+
+        # Also provide Telegram URL as alternative for AssemblyAI
+        bot_token = context.bot.token
+        tg_url    = f"https://api.telegram.org/file/bot{bot_token}/{tg_file.file_path}"
+
+        text = await loop.run_in_executor(
+            None, lambda: transcribe_voice(tmp_path, language=voice_lang, telegram_url=tg_url)
+        )
         tmp_path.unlink(missing_ok=True)
     except Exception as exc:
         await proc.delete()
