@@ -897,6 +897,16 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not voice:
         m = await update.message.reply_text("❓  No audio found."); _track_msg(context, m.message_id); return
 
+    # Warn if voice is very short (< 2 seconds)
+    duration = getattr(voice, "duration", 99)
+    if duration < 2:
+        m = await update.message.reply_html(
+            "⚠️  <b>Voice message too short!</b>\n\n"
+            "Please record at least <b>2-3 seconds</b> and speak clearly.\n"
+            "Try again 🎤"
+        )
+        _track_msg(context, m.message_id); return
+
     proc = await update.message.reply_html("🎤  <b>Listening to your voice...</b>")
     _track_msg(context, proc.message_id)
     try:
