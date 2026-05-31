@@ -1,10 +1,13 @@
 """
-API Key Manager — rotates between multiple Groq API keys on rate limit.
+AI Provider Manager — Gemini first, Groq as fallback.
 
-Add keys to Railway Variables:
-  GROQ_API_KEY    = first key
-  GROQ_API_KEY_2  = second key
-  GROQ_API_KEY_3  = third key (optional)
+Priority order:
+  1. GEMINI_API_KEY    (primary)
+  2. GEMINI_API_KEY_2  (second Gemini key)
+  3. GROQ_API_KEY      (Groq fallback)
+  4. GROQ_API_KEY_2    (second Groq key)
+
+When Gemini hits rate limit → automatically switches to Groq.
 """
 
 from __future__ import annotations
@@ -14,7 +17,16 @@ import time
 from loguru import logger
 
 
-def get_all_keys() -> list[str]:
+def get_gemini_keys() -> list[str]:
+    keys = []
+    for var in ["GEMINI_API_KEY", "GEMINI_API_KEY_2", "GEMINI_API_KEY_3"]:
+        k = os.getenv(var, "").strip()
+        if k:
+            keys.append(k)
+    return keys
+
+
+def get_groq_keys() -> list[str]:
     keys = []
     for var in ["GROQ_API_KEY", "GROQ_API_KEY_2", "GROQ_API_KEY_3"]:
         k = os.getenv(var, "").strip()
@@ -23,48 +35,68 @@ def get_all_keys() -> list[str]:
     return keys
 
 
-def run_with_key_rotation(func, *args, **kwargs):
+def is_rate_limit(err: str) -> bool:
+    return any(x in err for x in ["429", "RESOURCE_EXHAUSTED", "rate_limit", "RateLimitError", "quota"])
+
+
+def run_with_fallback(gemini_func, groq_func, *args, **kwargs):
     """
-    Run func(api_key, *args, **kwargs) rotating through all Groq API keys.
-    Switches key automatically on 429 rate limit.
+    Try Gemini keys first (in order), then Groq keys as fallback.
+    gemini_func(api_key, *args) and groq_func(api_key, *args) must have same signature.
     """
-    keys = get_all_keys()
-    if not keys:
+    gemini_keys = get_gemini_keys()
+    groq_keys   = get_groq_keys()
+
+    if not gemini_keys and not groq_keys:
         raise RuntimeError(
-            "No Groq API key found!\n"
-            "Add GROQ_API_KEY in Railway → Variables tab.\n"
-            "Get free key from: console.groq.com"
+            "No API keys found!\n"
+            "Add GEMINI_API_KEY or GROQ_API_KEY in Railway → Variables."
         )
 
-    last_error = None
-    for key_idx, api_key in enumerate(keys, 1):
-        key_label = f"Key {key_idx}"
+    # ── Try all Gemini keys ───────────────────────────────────────────────────
+    for i, key in enumerate(gemini_keys, 1):
         for attempt in range(2):
             try:
-                logger.debug(f"Trying Groq {key_label} (attempt {attempt+1})")
-                result = func(api_key, *args, **kwargs)
-                if key_idx > 1:
-                    logger.info(f"Success using Groq {key_label}")
+                result = gemini_func(key, *args, **kwargs)
+                logger.debug(f"✅ Gemini Key {i} succeeded")
                 return result
             except Exception as exc:
                 err = str(exc)
-                if "429" in err or "rate_limit" in err.lower() or "RateLimitError" in type(exc).__name__:
+                if is_rate_limit(err):
                     if attempt == 0:
-                        logger.warning(f"Rate limit on Groq {key_label}, waiting 10s...")
-                        time.sleep(10)
+                        logger.warning(f"⏳ Gemini Key {i} rate limited, waiting 15s...")
+                        time.sleep(15)
                         continue
                     else:
-                        last_error = exc
-                        logger.warning(
-                            f"Rate limit persists on Groq {key_label}, "
-                            f"{'switching to next key' if key_idx < len(keys) else 'all keys exhausted'}"
-                        )
+                        logger.warning(f"🔄 Gemini Key {i} still limited, trying next...")
                         break
                 else:
-                    raise
+                    raise   # not a rate limit — real error
+
+    # ── Gemini exhausted → fall back to Groq ─────────────────────────────────
+    if groq_keys:
+        logger.info("🔁 Gemini rate limited — switching to Groq")
+        for i, key in enumerate(groq_keys, 1):
+            for attempt in range(2):
+                try:
+                    result = groq_func(key, *args, **kwargs)
+                    logger.info(f"✅ Groq Key {i} succeeded (Gemini was rate limited)")
+                    return result
+                except Exception as exc:
+                    err = str(exc)
+                    if is_rate_limit(err):
+                        if attempt == 0:
+                            logger.warning(f"⏳ Groq Key {i} rate limited, waiting 10s...")
+                            time.sleep(10)
+                            continue
+                        else:
+                            logger.warning(f"🔄 Groq Key {i} still limited, trying next...")
+                            break
+                    else:
+                        raise
 
     raise RuntimeError(
-        f"All {len(keys)} Groq API key(s) are rate-limited.\n"
-        f"Please wait 1 minute and try again.\n"
-        f"Or add more keys: GROQ_API_KEY_2, GROQ_API_KEY_3 in Railway Variables."
+        "⏳ All API keys are rate limited right now.\n"
+        "Please wait 1-2 minutes and try again.\n"
+        "💡 Tip: Add more keys (GEMINI_API_KEY_2, GROQ_API_KEY_2) in Railway Variables."
     )
