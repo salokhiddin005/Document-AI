@@ -19,12 +19,16 @@ ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
 from src.ocr.auto_lang import detect_language, LANG_LABELS
+from src.ocr.drive_uploader import is_drive_configured, upload_text_to_drive, get_setup_instructions
 from src.ocr.gemini_vision import extract_text_gemini
 from src.ocr.history_manager import HistoryManager
+from src.ocr.key_info_extractor import extract_key_info
 from src.ocr.md_exporter import export_to_md, export_text_to_pdf
 from src.ocr.pdf_reader import pdf_to_images
+from src.ocr.qa_engine import answer_question
 from src.ocr.summarizer import summarize_text
 from src.ocr.text_extractor import SUPPORTED_LANGUAGES
+from src.ocr.translator import translate_text, LANGUAGES as TRANSLATE_LANGS, LANG_FLAGS
 from src.ocr.voice_transcriber import transcribe_voice
 from src.ocr.word_exporter import export_to_docx
 from src.preprocessing.image_enhancer import enhance_for_ocr
@@ -124,15 +128,23 @@ def _main_menu(context=None) -> InlineKeyboardMarkup:
 def _what_next_menu(doc_id: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("🤖 Summarize",        callback_data=f"summarize:{doc_id}"),
-            InlineKeyboardButton("✍️ Make Handwritten",  callback_data=f"to_hw:{doc_id}"),
+            InlineKeyboardButton("🤖 Summarize",       callback_data=f"summarize:{doc_id}"),
+            InlineKeyboardButton("🌐 Translate",        callback_data=f"translate:{doc_id}"),
         ],
         [
-            InlineKeyboardButton("📝 Text file",  callback_data=f"txt:{doc_id}"),
-            InlineKeyboardButton("📃 Word file",  callback_data=f"word:{doc_id}"),
-            InlineKeyboardButton("📄 JSON file",  callback_data=f"json:{doc_id}"),
+            InlineKeyboardButton("❓ Ask a Question",   callback_data=f"qa:{doc_id}"),
+            InlineKeyboardButton("🔑 Key Info",         callback_data=f"keyinfo:{doc_id}"),
         ],
-        [InlineKeyboardButton("🏠 Main Menu",   callback_data="menu")],
+        [
+            InlineKeyboardButton("✍️ Handwriting",      callback_data=f"to_hw:{doc_id}"),
+            InlineKeyboardButton("📁 Save to Drive",    callback_data=f"drive:{doc_id}"),
+        ],
+        [
+            InlineKeyboardButton("📝 TXT",  callback_data=f"txt:{doc_id}"),
+            InlineKeyboardButton("📃 Word", callback_data=f"word:{doc_id}"),
+            InlineKeyboardButton("📄 JSON", callback_data=f"json:{doc_id}"),
+        ],
+        [InlineKeyboardButton("🏠 Main Menu", callback_data="menu")],
     ])
 
 
@@ -164,6 +176,28 @@ def _paper_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("🔲 Grid",             callback_data="paper:grid"),
          InlineKeyboardButton("📓 Notebook",         callback_data="paper:notebook")],
         [InlineKeyboardButton("🏠 Back",             callback_data="menu")],
+    ])
+
+
+def _translate_keyboard(doc_id: str) -> InlineKeyboardMarkup:
+    """Language picker for translation."""
+    items = [(code, f"{LANG_FLAGS.get(code,'🌐')} {name}")
+             for code, name in TRANSLATE_LANGS.items()]
+    rows = []
+    for i in range(0, len(items), 2):
+        row = [InlineKeyboardButton(label, callback_data=f"do_translate:{doc_id}:{code}")
+               for code, label in items[i:i+2]]
+        rows.append(row)
+    rows.append([InlineKeyboardButton("🏠 Back", callback_data="menu")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _library_menu() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📋 All Documents",    callback_data="lib:all")],
+        [InlineKeyboardButton("🔍 Search",           callback_data="lib:search")],
+        [InlineKeyboardButton("🌐 Filter by Language", callback_data="lib:bylang")],
+        [InlineKeyboardButton("🏠 Main Menu",        callback_data="menu")],
     ])
 
 
@@ -376,6 +410,36 @@ async def cmd_style(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _track_msg(context, m.message_id)
 
 
+async def cmd_library(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Browse all past documents."""
+    _track_msg(context, update.message.message_id)
+    m = await update.message.reply_html(
+        "📚  <b>Document Library</b>\n\n"
+        "Browse, search, and filter all your past documents.\n\n"
+        "👇  Choose an option:",
+        reply_markup=_library_menu(),
+    )
+    _track_msg(context, m.message_id)
+
+
+async def cmd_drive(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show Google Drive setup or status."""
+    _track_msg(context, update.message.message_id)
+    if is_drive_configured():
+        m = await update.message.reply_html(
+            "📁  <b>Google Drive is connected!</b>\n\n"
+            "After processing any document, tap\n"
+            "<b>📁 Save to Drive</b> in the result buttons.",
+            reply_markup=_back_menu(),
+        )
+    else:
+        m = await update.message.reply_html(
+            get_setup_instructions(),
+            reply_markup=_back_menu(),
+        )
+    _track_msg(context, m.message_id)
+
+
 async def cmd_mystats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _track_msg(context, update.message.message_id)
     uid      = update.effective_user.id
@@ -539,6 +603,139 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             m = await query.message.reply_html(format_error(str(exc))); _track_msg(context, m.message_id)
         return
 
+    # ── Translate ─────────────────────────────────────────────────────────────
+    if data.startswith("translate:"):
+        doc_id = data.split(":", 1)[1]
+        full_text = _resolve_text(doc_id, context)
+        if not full_text:
+            m = await query.message.reply_text("❌ Text not found."); _track_msg(context, m.message_id); return
+        m = await query.message.reply_html(
+            "🌐  <b>Translate to which language?</b>",
+            reply_markup=_translate_keyboard(doc_id),
+        )
+        _track_msg(context, m.message_id); return
+
+    if data.startswith("do_translate:"):
+        _, doc_id, target_lang = data.split(":", 2)
+        full_text = _resolve_text(doc_id, context)
+        lang_name = f"{LANG_FLAGS.get(target_lang, '🌐')} {TRANSLATE_LANGS.get(target_lang, target_lang)}"
+        thinking  = await query.message.reply_html(f"🌐  <b>Translating to {lang_name}...</b>")
+        _track_msg(context, thinking.message_id)
+        try:
+            loop       = asyncio.get_event_loop()
+            translated = await loop.run_in_executor(None, lambda: translate_text(full_text, target_lang))
+            await thinking.delete()
+            m = await query.message.reply_html(
+                f"🌐  <b>Translation → {lang_name}</b>\n\n<pre>{translated[:3000]}</pre>",
+                reply_markup=_back_menu(),
+            )
+            _track_msg(context, m.message_id)
+        except Exception as exc:
+            await thinking.delete()
+            m = await query.message.reply_html(format_error(str(exc))); _track_msg(context, m.message_id)
+        return
+
+    # ── Q&A ───────────────────────────────────────────────────────────────────
+    if data.startswith("qa:"):
+        doc_id    = data.split(":", 1)[1]
+        full_text = _resolve_text(doc_id, context)
+        if not full_text:
+            m = await query.message.reply_text("❌ Text not found."); _track_msg(context, m.message_id); return
+        context.user_data["qa_doc_id"]    = doc_id
+        context.user_data["qa_full_text"] = full_text
+        context.user_data["mode"]         = "qa_mode"
+        m = await query.message.reply_html(
+            "❓  <b>Ask anything about this document!</b>\n\n"
+            "Just type your question below and I'll answer based on the document content.\n\n"
+            "<i>Example: What is the main topic? Who is mentioned? What date?</i>",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Cancel", callback_data="menu")]]),
+        )
+        _track_msg(context, m.message_id); return
+
+    # ── Key Info Extraction ───────────────────────────────────────────────────
+    if data.startswith("keyinfo:"):
+        doc_id    = data.split(":", 1)[1]
+        full_text = _resolve_text(doc_id, context)
+        if not full_text:
+            m = await query.message.reply_text("❌ Text not found."); _track_msg(context, m.message_id); return
+        thinking = await query.message.reply_html("🔑  <b>Extracting key information...</b>")
+        _track_msg(context, thinking.message_id)
+        try:
+            loop   = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, lambda: extract_key_info(full_text))
+            await thinking.delete()
+            m = await query.message.reply_html(
+                f"🔑  <b>Key Information Found</b>\n\n{result}",
+                reply_markup=_back_menu(),
+            )
+            _track_msg(context, m.message_id)
+        except Exception as exc:
+            await thinking.delete()
+            m = await query.message.reply_html(format_error(str(exc))); _track_msg(context, m.message_id)
+        return
+
+    # ── Google Drive ──────────────────────────────────────────────────────────
+    if data.startswith("drive:"):
+        doc_id    = data.split(":", 1)[1]
+        full_text = _resolve_text(doc_id, context)
+        if not full_text:
+            m = await query.message.reply_text("❌ Text not found."); _track_msg(context, m.message_id); return
+        if not is_drive_configured():
+            m = await query.message.reply_html(get_setup_instructions(), reply_markup=_back_menu())
+            _track_msg(context, m.message_id); return
+        saving = await query.message.reply_html("📁  <b>Saving to Google Drive...</b>")
+        _track_msg(context, saving.message_id)
+        try:
+            loop = asyncio.get_event_loop()
+            link = await loop.run_in_executor(
+                None, lambda: upload_text_to_drive(full_text, f"{doc_id}.txt", doc_id)
+            )
+            await saving.delete()
+            m = await query.message.reply_html(
+                f"📁  <b>Saved to Google Drive!</b>\n\n"
+                f"🔗  <a href='{link}'>Open in Drive</a>",
+                reply_markup=_back_menu(),
+            )
+            _track_msg(context, m.message_id)
+        except Exception as exc:
+            await saving.delete()
+            m = await query.message.reply_html(format_error(str(exc))); _track_msg(context, m.message_id)
+        return
+
+    # ── Document Library ──────────────────────────────────────────────────────
+    if data.startswith("lib:"):
+        action = data.split(":", 1)[1]
+        uid    = str(query.from_user.id)
+
+        if action == "all":
+            entries = get_history().get_user_history(uid, limit=20)
+            if not entries:
+                m = await query.message.reply_html("📚  No documents yet!", reply_markup=_back_menu())
+                _track_msg(context, m.message_id); return
+            lines = [f"📚  <b>All Documents ({len(entries)})</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"]
+            for e in entries:
+                lines.append(f"  🔖 <code>{e.id}</code>  🌐 {e.lang}  📝 {e.word_count}w  🕐 {e.created_at}\n  <i>{e.preview}</i>\n")
+            lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n💡 Get text: /history_get &lt;id&gt;")
+            m = await query.message.reply_html("\n".join(lines), reply_markup=_library_menu())
+            _track_msg(context, m.message_id); return
+
+        elif action == "search":
+            context.user_data["mode"] = "lib_search"
+            m = await query.message.reply_html(
+                "🔍  <b>Search your documents</b>\n\nType a keyword to search:",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Cancel", callback_data="menu")]]),
+            )
+            _track_msg(context, m.message_id); return
+
+        elif action == "bylang":
+            stats = get_history().get_user_stats(uid)
+            m = await query.message.reply_html(
+                "🌐  <b>Filter by Language</b>\n\nChoose a language:",
+                reply_markup=_lang_keyboard(),
+            )
+            _track_msg(context, m.message_id); return
+
+    # ── File downloads ────────────────────────────────────────────────────────
     if ":" in data and data.split(":")[0] in ("json", "txt"):
         kind, doc_id = data.split(":", 1)
         files = (context.bot_data.get("files") or {}).get(doc_id)
@@ -906,6 +1103,48 @@ async def _process_ocr(update: Update, context: ContextTypes.DEFAULT_TYPE, file_
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _track_user_msg(context, update.message.message_id)
     mode = context.user_data.get("mode")
+    text = update.message.text.strip()
+
+    # ── Q&A mode ──────────────────────────────────────────────────────────────
+    if mode == "qa_mode":
+        doc_text = context.user_data.get("qa_full_text", "")
+        if not doc_text:
+            m = await update.message.reply_text("❌ No document loaded. Process an image first.")
+            _track_msg(context, m.message_id); return
+        thinking = await update.message.reply_html(f"🤔  <b>Thinking about your question...</b>")
+        _track_msg(context, thinking.message_id)
+        try:
+            loop   = asyncio.get_event_loop()
+            answer = await loop.run_in_executor(None, lambda: answer_question(doc_text, text))
+            await thinking.delete()
+            m = await update.message.reply_html(
+                f"❓  <b>Question:</b> {text}\n\n"
+                f"💡  <b>Answer:</b>\n{answer}\n\n"
+                f"<i>Ask another question or tap Main Menu</i>",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="menu")]]),
+            )
+            _track_msg(context, m.message_id)
+        except Exception as exc:
+            await thinking.delete()
+            m = await update.message.reply_html(format_error(str(exc))); _track_msg(context, m.message_id)
+        return
+
+    # ── Library search mode ───────────────────────────────────────────────────
+    if mode == "lib_search":
+        uid     = str(update.effective_user.id)
+        entries = get_history().search_history(uid, keyword=text, limit=10)
+        context.user_data["mode"] = None
+        if not entries:
+            m = await update.message.reply_html(
+                f"🔍  No documents found containing <b>'{text}'</b>",
+                reply_markup=_library_menu(),
+            )
+            _track_msg(context, m.message_id); return
+        lines = [f"🔍  <b>Search results for '{text}' ({len(entries)} found)</b>\n"]
+        for e in entries:
+            lines.append(f"  🔖 <code>{e.id}</code>  🌐 {e.lang}  {e.created_at}\n  <i>{e.preview}</i>\n")
+        m = await update.message.reply_html("\n".join(lines), reply_markup=_library_menu())
+        _track_msg(context, m.message_id); return
 
     if not mode or mode != MODE_HTR:
         m = await update.message.reply_html(

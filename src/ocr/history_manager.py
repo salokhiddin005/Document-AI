@@ -144,6 +144,44 @@ class HistoryManager:
                 "words":      sum(r.word_count for r in records),
             }
 
+    def search_history(self, user_id: str, keyword: str, limit: int = 10) -> list[HistoryEntry]:
+        """Search user's history by keyword in text content."""
+        with self._Session() as session:
+            rows = (
+                session.query(HistoryRecord)
+                .filter(
+                    HistoryRecord.user_id == str(user_id),
+                    HistoryRecord.full_text.ilike(f"%{keyword}%"),
+                )
+                .order_by(HistoryRecord.created_at.desc())
+                .limit(limit)
+                .all()
+            )
+            return [self._to_entry(r) for r in rows]
+
+    def filter_by_lang(self, user_id: str, lang: str, limit: int = 20) -> list[HistoryEntry]:
+        """Filter history by language."""
+        with self._Session() as session:
+            rows = (
+                session.query(HistoryRecord)
+                .filter(
+                    HistoryRecord.user_id == str(user_id),
+                    HistoryRecord.lang == lang,
+                )
+                .order_by(HistoryRecord.created_at.desc())
+                .limit(limit)
+                .all()
+            )
+            return [self._to_entry(r) for r in rows]
+
+    def _to_entry(self, r: HistoryRecord) -> HistoryEntry:
+        return HistoryEntry(
+            id=r.id, doc_id=r.doc_id,
+            preview=(r.full_text[:80] + "...") if len(r.full_text) > 80 else r.full_text,
+            lang=r.lang, word_count=r.word_count,
+            created_at=str(r.created_at)[:16], full_text=r.full_text,
+        )
+
     def clear_user_history(self, user_id: str) -> int:
         with self._Session() as session:
             count = session.query(HistoryRecord).filter(

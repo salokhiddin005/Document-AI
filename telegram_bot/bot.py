@@ -28,10 +28,12 @@ from telegram.ext import (
 
 from telegram_bot.handlers import (
     cmd_clear,
+    cmd_drive,
     cmd_help,
     cmd_history,
     cmd_history_get,
     cmd_lang,
+    cmd_library,
     cmd_mode,
     cmd_mystats,
     cmd_start,
@@ -67,15 +69,16 @@ PERSISTENCE_FILE.parent.mkdir(parents=True, exist_ok=True)
 
 async def post_init(application: Application) -> None:
     await application.bot.set_my_commands([
-        BotCommand("start",       "Main menu — all modes"),
-        BotCommand("mode",        "Switch conversion mode"),
-        BotCommand("lang",        "Change OCR language"),
-        BotCommand("style",       "Handwriting style"),
-        BotCommand("history",     "View past OCR results"),
-        BotCommand("clear",       "Clear chat — like terminal clear"),
-        BotCommand("help",        "How to use the bot"),
-        BotCommand("status",      "System status"),
-        BotCommand("mystats",     "Your usage statistics"),
+        BotCommand("start",    "Main menu — all modes"),
+        BotCommand("mode",     "Switch conversion mode"),
+        BotCommand("library",  "Browse all your documents"),
+        BotCommand("history",  "Recent OCR results"),
+        BotCommand("drive",    "Google Drive setup & status"),
+        BotCommand("lang",     "Change OCR language"),
+        BotCommand("style",    "Handwriting style"),
+        BotCommand("clear",    "Clear chat"),
+        BotCommand("mystats",  "Your usage statistics"),
+        BotCommand("help",     "How to use the bot"),
     ])
     info = await application.bot.get_me()
     logger.info(f"Bot ready: @{info.username} ({info.full_name})")
@@ -110,6 +113,8 @@ def main() -> None:
     app.add_handler(CommandHandler("style",       cmd_style))
     app.add_handler(CommandHandler("history",     cmd_history))
     app.add_handler(CommandHandler("history_get", cmd_history_get))
+    app.add_handler(CommandHandler("library",     cmd_library))
+    app.add_handler(CommandHandler("drive",       cmd_drive))
     app.add_handler(CommandHandler("clear",       cmd_clear))
     app.add_handler(CommandHandler("help",        cmd_help))
     app.add_handler(CommandHandler("status",      cmd_status))
