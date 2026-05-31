@@ -219,20 +219,12 @@ def format_error(error: str) -> str:
 
     if is_rate_limit:
         return (
-            "⏳  <b>API Rate Limit Reached</b>\n\n"
+            "⏳  <b>Service is busy right now</b>\n\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "Both Gemini and Groq API keys are temporarily busy.\n"
+            "The AI service is temporarily overloaded.\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "🔧  <b>How to fix:</b>\n\n"
-            "  ⏱️  <b>Option 1 — Wait 1 minute</b>\n"
-            "       Free API limits reset every 60 seconds\n\n"
-            "  🔑  <b>Option 2 — Add more API keys</b>\n"
-            "       Go to Railway → Variables → Add:\n"
-            "       <code>GEMINI_API_KEY_2</code> = new Gemini key\n"
-            "       <code>GROQ_API_KEY_2</code> = new Groq key\n\n"
-            "  🌐  Get free keys:\n"
-            "       Gemini: <b>aistudio.google.com</b>\n"
-            "       Groq:   <b>console.groq.com</b>"
+            "✅  <b>Just wait 1 minute and try again.</b>\n\n"
+            "This happens automatically — no action needed!"
         )
 
     # Generic error with context-aware tips
